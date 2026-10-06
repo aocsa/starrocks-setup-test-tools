@@ -81,6 +81,7 @@ Settings for the 4-CN script, all through the environment:
 | `PIN`, `PIN_TIER`, `PIN_COMPRESSION` | `0`, `host`, `0` | pin `lineitem` + `orders` on every CN before the queries (`harness/pin.sh`) |
 | `FE_WHOLE_FILE_RANGES` | `$PIN` | whole files per CN (FE patch) instead of byte ranges |
 | `INJECT_FAILURE_QUERY` | unset | first run this query with one fragment failed on purpose, and require the CNs to hold nothing afterwards |
+| `ENGINE_LOGS` | `0` | `1` writes each CN's engine log to `run/engine-cn<i>/` (`SIRIUS_LOG_LEVEL`, default `info`) |
 | `ALLOW_BUSY_GPUS` | `0` | `1` skips the check that the selected GPUs are idle |
 | `FE_*_PORT`, `PORT_BASE`, `PORT_STRIDE` | 9031/8031/9021/9011, 9100, 10 | FE ports and CN port range; non-default so another FE can run alongside |
 

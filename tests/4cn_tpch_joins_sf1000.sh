@@ -292,9 +292,15 @@ start_cn() {
             bind=(numactl --cpunodebind="$node")
         fi
     fi
+    # Engine logs: one directory per CN when ENGINE_LOGS=1 (the engine names its file sirius.log).
+    local engine_log=()
+    if [[ "${ENGINE_LOGS:-0}" == 1 ]]; then
+        engine_log=(SIRIUS_LOG_DIR="$E2E/engine-cn$i" SIRIUS_LOG_LEVEL="${SIRIUS_LOG_LEVEL:-info}")
+    fi
     # CUDA remaps the pinned GPU to ordinal 0 inside the process.
     # NO_COLOR keeps tracing fields as plain key=value for the log checks below.
     setsid env \
+        "${engine_log[@]}" \
         CUDA_VISIBLE_DEVICES="$gpu" \
         NO_COLOR=1 \
         UCX_TLS="$UCX_TLS" \
