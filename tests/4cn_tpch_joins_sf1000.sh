@@ -6,10 +6,10 @@
 #
 # SF1000 differs from SF1 in three ways this script has to handle:
 #   - Scans are spread over all CNs. The FE cuts FILES() byte ranges at instance
-#     boundaries, and the CN refuses a parquet file whose ranges are split across
-#     instances ("byte-range splits do not tile the parquet file"). The FE must carry
-#     the `files_query_whole_file_ranges` patch (Config.java + FileScanNode.java); the
-#     script turns it on and stops if the FE does not know it.
+#     boundaries. A CN with byte-range support (Sirius a9c4b340 and later) reads the row
+#     groups its ranges own; set FE_WHOLE_FILE_RANGES=1 to have the patched FE hand out
+#     whole files instead (required with PIN=1: pins serve whole files only, and older CNs
+#     refuse split files). The script stops if that setting is asked for and the FE lacks it.
 #   - Cold scans of ~266 GB outlast the FE's 60 s fragment-deploy RPC timeout, so it is
 #     raised to 30 min, and the query timeout to 1 h.
 #   - DuckDB's answer takes minutes per query at this scale, so it is cached under
@@ -18,20 +18,29 @@
 # A failing query does not stop the run; a CN that dies does (later queries would only
 # report the dead CN). The summary lists every query with its wall time.
 #
-# Requires: the release CN (see scripts/cn-env.sh for the NIXL build), the packaged FE
-# with the whole-file patch, the `client` pixi env (mysql), and the repo-root pixi env
-# (python + duckdb).
+# Requires the setup/ builds: the release CN, the packaged FE with the whole-file patch, the
+# `client` pixi env (mysql), and the repo-root pixi env (python + duckdb). Sirius is found
+# through env.sh (SIRIUS_DIR, default ../sirius next to this repo).
+#
+# Results: each query appends `engine,query,iteration,runtime_s,status` to RESULTS_CSV when set
+# (harness/bench.sh sets it, with ITERATION). Wall times are the StarRocks query only.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-SR_DIR=$(cd "$HERE/.." && pwd)
-REPO_ROOT=$(cd "$SR_DIR/../.." && pwd)
+# shellcheck source=../env.sh
+source "$HERE/../env.sh"
+require_sirius
+# shellcheck source=../harness/cn_leak_check.sh
+source "$TOOLS_REPO/harness/cn_leak_check.sh"
+# shellcheck source=../harness/pin.sh
+source "$TOOLS_REPO/harness/pin.sh"
 
 # nixl / UCX paths, UCX_TLS, and LD_LIBRARY_PATH (engine .so, nixl, UCX, pixi).
 # shellcheck source=/dev/null
 source "$SR_DIR/scripts/cn-env.sh"
 
-RUN_ROOT=${RUN_ROOT:-/scratch/$USER/sirius-4cn-sf1000-joins}
+SF=${SF:-1000}
+RUN_ROOT=${RUN_ROOT:-$RUN_ROOT_BASE/tpch-joins-sf$SF}
 E2E=${SIRIUS_4CN_E2E_DIR:-$RUN_ROOT/run}
 ORACLE_DIR=${ORACLE_DIR:-$RUN_ROOT/oracle}
 CN_BIN=${CN_BIN:-$SR_DIR/target/release/sirius-starrocks-cn}
@@ -42,7 +51,7 @@ SIRIUS_LIB=${SIRIUS_LIB:-$REPO_ROOT/build/release/extension/sirius}
 # The FE was built with the fe env's JDK 17.
 export JAVA_HOME=${JAVA_HOME:-$SR_DIR/.pixi/envs/fe/lib/jvm}
 
-TPCH_DATA=${TPCH_DATA:-/scratch/sirius/datasets/tpch_sf1000}
+TPCH_DATA=${TPCH_DATA:-$DATA_ROOT/tpch_sf$SF}
 QUERIES=${TPCH_QUERIES:-q14 q05 q07 q08 q09 q12 q19}
 GPUS=(${GPUS:-0 1 2 3})
 NUM_CNS=${#GPUS[@]}
@@ -63,6 +72,18 @@ PIPELINE_THREADS=${PIPELINE_THREADS:-4}
 # Bind each CN's threads to the CPU socket of its GPU.
 NUMA_BIND=${NUMA_BIND:-1}
 QUERY_TIMEOUT_S=${QUERY_TIMEOUT_S:-3600}
+# Set to a query name (e.g. q05) to first run that query with one fragment failed on purpose, and
+# require that the CNs hold nothing afterwards. The query then runs again in the normal loop.
+INJECT_FAILURE_QUERY=${INJECT_FAILURE_QUERY:-}
+# PIN=1 pins lineitem and orders on every CN before the queries (harness/pin.sh; PIN_TIER,
+# PIN_*_COLS). PIN_COMPRESSION=1 compresses pins with the Simpatico plans in PIN_PLAN_DIR.
+PIN=${PIN:-0}
+PIN_COMPRESSION=${PIN_COMPRESSION:-0}
+PIN_PLAN_DIR=${PIN_PLAN_DIR:-$REPO_ROOT/src/compression/simpatico_codegen/plans/tpch_sf1000}
+# Whole parquet files per CN (the FE patch) instead of byte ranges. Pins need it.
+FE_WHOLE_FILE_RANGES=${FE_WHOLE_FILE_RANGES:-$PIN}
+RESULTS_CSV=${RESULTS_CSV:-}
+ITERATION=${ITERATION:-0}
 # DuckDB defaults to 80% of RAM, which would collide with the CNs' host tiers.
 export DUCKDB_MEMORY_LIMIT=${DUCKDB_MEMORY_LIMIT:-512GB}
 
@@ -116,10 +137,16 @@ for port in "${ports[@]}"; do
     fi
 done
 
-# The GPUs may be shared with other sessions; each CN reserves most of its GPU.
-busy=$(nvidia-smi --query-compute-apps=gpu_bus_id,pid,used_memory --format=csv,noheader || true)
+# The GPUs may be shared with other sessions; each CN reserves most of its GPU. Only the GPUs
+# this run uses matter.
+busy=""
+for gpu in "${GPUS[@]}"; do
+    bus=$(nvidia-smi -i "$gpu" --query-gpu=pci.bus_id --format=csv,noheader)
+    busy+=$(nvidia-smi --query-compute-apps=gpu_bus_id,pid,used_memory --format=csv,noheader |
+        grep -i "^${bus}," || true)
+done
 if [[ -n "$busy" && "${ALLOW_BUSY_GPUS:-0}" != 1 ]]; then
-    echo "GPUs already have compute processes (ALLOW_BUSY_GPUS=1 to ignore):" >&2
+    echo "GPUs ${GPUS[*]} already have compute processes (ALLOW_BUSY_GPUS=1 to ignore):" >&2
     echo "$busy" >&2
     exit 2
 fi
@@ -197,6 +224,13 @@ sirius:
     pipeline:
       num_threads: ${PIPELINE_THREADS}
 YAML
+if [[ "$PIN_COMPRESSION" == 1 ]]; then
+    cat >>"$E2E/sirius.yaml" <<YAML
+  compression:
+    enable_pin_table_compression: true
+    input_plan_dir: "${PIN_PLAN_DIR}"
+YAML
+fi
 
 echo "== packaging isolated FE =="
 cp -a "$STARROCKS_FE/bin" "$E2E/fe/bin"
@@ -218,7 +252,9 @@ set_fe_conf "$fe_conf" rpc_port "$FE_RPC_PORT"
 set_fe_conf "$fe_conf" edit_log_port "$FE_EDIT_LOG_PORT"
 set_fe_conf "$fe_conf" qe_query_timeout_second "$QUERY_TIMEOUT_S"
 set_fe_conf "$fe_conf" brpc_send_plan_fragment_timeout_ms 1800000
-set_fe_conf "$fe_conf" files_query_whole_file_ranges true
+if [[ "$FE_WHOLE_FILE_RANGES" == 1 ]]; then
+    set_fe_conf "$fe_conf" files_query_whole_file_ranges true
+fi
 
 echo "== starting FE on :$FE_QUERY_PORT =="
 "$E2E/fe/bin/start_fe.sh" --daemon >"$E2E/fe-start.log" 2>&1
@@ -233,7 +269,7 @@ mysql_exec -e "SHOW FRONTENDS" >/dev/null
 
 # An unpatched FE ignores the unknown fe.conf key; ask it directly.
 whole_file=$(mysql_exec -e "ADMIN SHOW FRONTEND CONFIG LIKE 'files_query_whole_file_ranges'" | cut -f3)
-if [[ "$whole_file" != true ]]; then
+if [[ "$FE_WHOLE_FILE_RANGES" == 1 && "$whole_file" != true ]]; then
     echo "FE at $STARROCKS_FE lacks files_query_whole_file_ranges (got '${whole_file}')." >&2
     echo "Apply the whole-file patch to starrocks/ (Config.java, FileScanNode.java) and re-run fe-build." >&2
     exit 1
@@ -269,6 +305,7 @@ start_cn() {
         RUST_LOG="${RUST_LOG:-sirius_starrocks_cn=info}" \
         RUST_BACKTRACE=1 \
         SIRIUS_CN_DUMP_FRAGMENTS="$E2E/frags" \
+        SIRIUS_CN_FAIL_ONCE_FILE="$E2E/fail-once" \
         "${bind[@]}" \
         stdbuf -oL -eL \
         "$CN_BIN" \
@@ -317,6 +354,7 @@ if [[ "$alive" -lt "$NUM_CNS" ]]; then
     exit 1
 fi
 mysql_table -e "SHOW COMPUTE NODES" | cut -f1-9
+echo "== FILES() scans: $([[ "$FE_WHOLE_FILE_RANGES" == 1 ]] && echo 'whole files per CN' || echo 'byte ranges per CN') =="
 
 SQL_DIR="$HERE/tpch"
 SESSION="SET query_timeout = ${QUERY_TIMEOUT_S}; SET pipeline_dop = 1; SET parallel_fragment_exec_instance_num = 1;"
@@ -325,9 +363,55 @@ data_tag=$(printf '%s' "$TPCH_DATA" | tr -c 'A-Za-z0-9._-' '_')
 results=()
 failed=0
 cn_died=0
+
+# Seconds since `start` (an $EPOCHREALTIME), to the millisecond.
+since() { awk -v start="$1" -v now="$EPOCHREALTIME" 'BEGIN { printf "%.3f", now - start }'; }
+record() { # query runtime_s status
+    [[ -z "$RESULTS_CSV" ]] || echo "starrocks,$1,$ITERATION,$2,$3" >>"$RESULTS_CSV"
+}
+
+if [[ -n "$INJECT_FAILURE_QUERY" ]]; then
+    q=$INJECT_FAILURE_QUERY
+    echo "== failing one fragment of TPC-H ${q} on purpose =="
+    sql=$(sed "s|__TPCH_DATA__|${TPCH_DATA}|g" "$SQL_DIR/${q}.sql")
+    # The first fragment any CN runs after this appears fails, and removes the file.
+    touch "$E2E/fail-once"
+    if mysql_table -e "${SESSION} ${sql}" >/dev/null 2>"$E2E/injected-${q}.err"; then
+        results+=("FAIL injected-${q} (the query passed; no fragment failed)")
+        failed=$((failed + 1))
+    elif [[ -e "$E2E/fail-once" ]]; then
+        results+=("FAIL injected-${q} (failed before any fragment ran: $(head -c 160 "$E2E/injected-${q}.err" | tr '\n' ' '))")
+        failed=$((failed + 1))
+    elif cn_leaks "$E2E" "$NUM_CNS"; then
+        results+=("PASS injected-${q} (failed as injected; the CNs hold nothing afterwards)")
+    else
+        results+=("FAIL injected-${q} (a CN still holds the failed query's GPU memory)")
+        failed=$((failed + 1))
+    fi
+    rm -f "$E2E/fail-once"
+    cns_alive || cn_died=1
+fi
+
+if [[ "$PIN" == 1 ]]; then
+    echo "== pinning lineitem and orders on every CN (tier $PIN_TIER) =="
+    start=$EPOCHREALTIME
+    if pin_tables mysql_exec; then
+        elapsed=$(since "$start")
+        results+=("PASS pin ${elapsed}s")
+        record pin "$elapsed" PASS
+    else
+        elapsed=$(since "$start")
+        results+=("FAIL pin ${elapsed}s (see the CN logs)")
+        record pin "$elapsed" FAIL
+        failed=$((failed + 1))
+    fi
+    cns_alive || cn_died=1
+fi
+
 for q in $QUERIES; do
     if [[ "$cn_died" -eq 1 ]]; then
         results+=("SKIP ${q}")
+        record "$q" "" SKIP
         failed=$((failed + 1))
         continue
     fi
@@ -336,23 +420,30 @@ for q in $QUERIES; do
     sql_hash=$(sha256sum "$SQL_DIR/${q}.sql" | cut -c1-12)
     oracle="$ORACLE_DIR/$data_tag/${q}-${sql_hash}.json"
     [[ -e "$oracle" ]] || echo "   (no cached oracle; DuckDB computes it after the query, which can take minutes)"
-    start=$SECONDS
+    start=$EPOCHREALTIME
     if mysql_table -e "${SESSION} ${sql}" >"$E2E/${q}.tsv" 2>"$E2E/${q}.err"; then
-        elapsed=$((SECONDS - start))
+        elapsed=$(since "$start")
         cat "$E2E/${q}.tsv"
         if "$PYTHON" "$HERE/tpch_files_compare.py" "$SQL_DIR/${q}.sql" "$TPCH_DATA" "$E2E/${q}.tsv" "$oracle"; then
             results+=("PASS ${q} ${elapsed}s")
+            record "$q" "$elapsed" PASS
         else
             results+=("FAIL ${q} ${elapsed}s (result mismatch)")
+            record "$q" "$elapsed" MISMATCH
             failed=$((failed + 1))
         fi
     else
-        elapsed=$((SECONDS - start))
+        elapsed=$(since "$start")
         cat "$E2E/${q}.err" >&2
         results+=("FAIL ${q} ${elapsed}s ($(head -c 160 "$E2E/${q}.err" | tr '\n' ' '))")
+        record "$q" "$elapsed" FAIL
         failed=$((failed + 1))
     fi
     cns_alive || cn_died=1
+    if [[ "$cn_died" -eq 0 ]] && ! cn_leaks "$E2E" "$NUM_CNS"; then
+        results+=("FAIL ${q}-leak (a CN still holds GPU memory of ${q} after it ended)")
+        failed=$((failed + 1))
+    fi
 done
 
 echo "== checking packed NIXL hops over transmit_chunk =="
@@ -384,4 +475,4 @@ printf '%s\n' "${results[@]}" "${hops} nixl-hops"
 [[ "$failed" -eq 0 ]] || exit 1
 
 dump_logs_on_fail=0
-echo "OK: SF1000 TPC-H join queries matched DuckDB across ${NUM_CNS} CNs with a packed NIXL shuffle"
+echo "OK: TPC-H join queries matched DuckDB across ${NUM_CNS} CNs with a packed NIXL shuffle"

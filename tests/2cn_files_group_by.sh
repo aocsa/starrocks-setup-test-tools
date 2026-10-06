@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FE + two Sirius CNs on MIG ordinals 0 and 1 run:
+# FE + two Sirius CNs on GPU (or MIG) ordinals 0 and 1 run:
 #   SELECT region, SUM(amount) FROM FILES("...") GROUP BY region
 # Each CN's GPU pool is a NIXL-registered slab: the shuffle WRITEs a batch's
 # buffers straight into receive buffers the peer allocated in its own slab.
@@ -12,42 +12,40 @@
 # Requires a release CN linked to libsirius (`cargo build --release -p sirius-starrocks-cn`).
 set -euo pipefail
 
-# gpu-lock.sh holds the lock in the parent and runs this script with fd 9 closed.
-# Re-execing gpu-lock from here deadlocks on the same flock. Wrap the script:
-#   /home/ubuntu/sirius-wt/all22/gpu-lock.sh experimental/starrocks/tests/2cn_files_group_by.sh
-GPU_LOCK_FILE=${GPU_LOCK_FILE:-/home/ubuntu/sirius-wt/.gpu.lock}
-if [[ -w "$(dirname "$GPU_LOCK_FILE")" ]]; then
+# Shared boxes can serialize GPU runs with a lock: set GPU_LOCK_FILE to a lock that a wrapper
+# holds (flock) while this script runs, and the script refuses to start unless it is held.
+if [[ -n "${GPU_LOCK_FILE:-}" && -w "$(dirname "$GPU_LOCK_FILE")" ]]; then
     exec 8>"$GPU_LOCK_FILE"
     if flock -n 8; then
         flock -u 8
         exec 8>&-
-        echo "refusing to start without gpu-lock: GPUs on this box are shared" >&2
-        echo "run: /home/ubuntu/sirius-wt/all22/gpu-lock.sh $0" >&2
+        echo "refusing to start: GPU_LOCK_FILE=$GPU_LOCK_FILE is not held by a wrapper" >&2
         exit 2
     fi
     exec 8>&-
 fi
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-SR_DIR=$(cd "$HERE/.." && pwd)
-REPO_ROOT=$(cd "$SR_DIR/../.." && pwd)
+# shellcheck source=../env.sh
+source "$HERE/../env.sh"
+require_sirius
 
-# shellcheck source=/dev/null
-source /home/ubuntu/sirius-wt/env.sh
-export TMPDIR=${TMPDIR:-/opt/dlami/nvme/tmp}
-export TOOLS_DIR=${TOOLS_DIR:-/home/ubuntu/sirius-wt/tools}
 # nixl / UCX paths, UCX_TLS, and LD_LIBRARY_PATH (engine .so, nixl, UCX, pixi).
 # shellcheck source=/dev/null
 source "$SR_DIR/scripts/cn-env.sh"
 
-E2E=${SIRIUS_2CN_E2E_DIR:-/opt/dlami/nvme/tmp/sirius-2cn-e2e}
+E2E=${SIRIUS_2CN_E2E_DIR:-$RUN_ROOT_BASE/2cn-files-group-by/run}
 CN_BIN=${CN_BIN:-$SR_DIR/target/release/sirius-starrocks-cn}
-STARROCKS_FE=${STARROCKS_FE:-/home/ubuntu/sirius-wt/demo/experimental/starrocks/starrocks/output/fe}
-MYSQL=${MYSQL:-/home/ubuntu/sirius-wt/demo/experimental/starrocks/.pixi/envs/client/bin/mysql}
-PYTHON=${PYTHON:-/home/ubuntu/sirius-wt/base/.pixi/envs/default/bin/python}
+STARROCKS_FE=${STARROCKS_FE:-$SR_DIR/starrocks/output/fe}
+MYSQL=${MYSQL:-$SR_DIR/.pixi/envs/client/bin/mysql}
+PYTHON=${PYTHON:-$REPO_ROOT/.pixi/envs/default/bin/python}
 SIRIUS_LIB=${SIRIUS_LIB:-$REPO_ROOT/build/release/extension/sirius}
 
-FE_QUERY_PORT=${FE_QUERY_PORT:-9030}
+# Off the StarRocks defaults (9030/8030/9020/9010): another FE may already hold them.
+FE_QUERY_PORT=${FE_QUERY_PORT:-9031}
+FE_HTTP_PORT=${FE_HTTP_PORT:-8031}
+FE_RPC_PORT=${FE_RPC_PORT:-9021}
+FE_EDIT_LOG_PORT=${FE_EDIT_LOG_PORT:-9011}
 PORT_BASE=${PORT_BASE:-9100}
 PORT_STRIDE=${PORT_STRIDE:-10}
 export UCX_TLS=${UCX_TLS:-cuda_copy,cuda_ipc,tcp,self}
@@ -205,13 +203,18 @@ ln -sfn "$STARROCKS_FE/lib" "$E2E/fe/lib"
 ln -sfn "$STARROCKS_FE/webroot" "$E2E/fe/webroot"
 ln -sfn "$STARROCKS_FE/hive-udf" "$E2E/fe/hive-udf"
 ln -sfn "$STARROCKS_FE/spark-dpp" "$E2E/fe/spark-dpp"
-ln -sfn "$STARROCKS_FE/plugins" "$E2E/fe/plugins"
+# plugins/ is FE runtime state, absent from a freshly built package; a symlink to it
+# dangles and the FE dies with "failed to create FE plugin dir".
+mkdir -p "$E2E/fe/plugins"
 set_fe_conf "$E2E/fe/conf/fe.conf" meta_dir "$E2E/fe/meta"
 set_fe_conf "$E2E/fe/conf/fe.conf" sys_log_dir "$E2E/fe/log"
 set_fe_conf "$E2E/fe/conf/fe.conf" audit_log_dir "$E2E/fe/log"
 set_fe_conf "$E2E/fe/conf/fe.conf" priority_networks "127.0.0.1/32"
 set_fe_conf "$E2E/fe/conf/fe.conf" qe_query_timeout_second 600
 set_fe_conf "$E2E/fe/conf/fe.conf" query_port "$FE_QUERY_PORT"
+set_fe_conf "$E2E/fe/conf/fe.conf" http_port "$FE_HTTP_PORT"
+set_fe_conf "$E2E/fe/conf/fe.conf" rpc_port "$FE_RPC_PORT"
+set_fe_conf "$E2E/fe/conf/fe.conf" edit_log_port "$FE_EDIT_LOG_PORT"
 
 echo "== starting FE =="
 "$E2E/fe/bin/start_fe.sh" --daemon >"$E2E/fe-start.log" 2>&1
