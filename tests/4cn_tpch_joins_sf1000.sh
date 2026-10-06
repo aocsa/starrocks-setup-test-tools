@@ -357,6 +357,16 @@ mysql_table -e "SHOW COMPUTE NODES" | cut -f1-9
 echo "== FILES() scans: $([[ "$FE_WHOLE_FILE_RANGES" == 1 ]] && echo 'whole files per CN' || echo 'byte ranges per CN') =="
 
 SQL_DIR="$HERE/tpch"
+# TPCH_SQL_DIR (e.g. tests/tpch-hinted) overrides the query StarRocks runs, per query that has a
+# file there. The DuckDB oracle, and its cache key, always use the standard query in SQL_DIR:
+# a variant must return the same answer.
+run_sql_file() {
+    if [[ -n "${TPCH_SQL_DIR:-}" && -e "$TPCH_SQL_DIR/$1.sql" ]]; then
+        echo "$TPCH_SQL_DIR/$1.sql"
+    else
+        echo "$SQL_DIR/$1.sql"
+    fi
+}
 SESSION="SET query_timeout = ${QUERY_TIMEOUT_S}; SET pipeline_dop = 1; SET parallel_fragment_exec_instance_num = 1;"
 data_tag=$(printf '%s' "$TPCH_DATA" | tr -c 'A-Za-z0-9._-' '_')
 
@@ -373,7 +383,7 @@ record() { # query runtime_s status
 if [[ -n "$INJECT_FAILURE_QUERY" ]]; then
     q=$INJECT_FAILURE_QUERY
     echo "== failing one fragment of TPC-H ${q} on purpose =="
-    sql=$(sed "s|__TPCH_DATA__|${TPCH_DATA}|g" "$SQL_DIR/${q}.sql")
+    sql=$(sed "s|__TPCH_DATA__|${TPCH_DATA}|g" "$(run_sql_file "$q")")
     # The first fragment any CN runs after this appears fails, and removes the file.
     touch "$E2E/fail-once"
     if mysql_table -e "${SESSION} ${sql}" >/dev/null 2>"$E2E/injected-${q}.err"; then
@@ -415,8 +425,8 @@ for q in $QUERIES; do
         failed=$((failed + 1))
         continue
     fi
-    echo "== running TPC-H ${q} via FILES() on ${NUM_CNS} CNs =="
-    sql=$(sed "s|__TPCH_DATA__|${TPCH_DATA}|g" "$SQL_DIR/${q}.sql")
+    echo "== running TPC-H ${q} via FILES() on ${NUM_CNS} CNs ($(basename "$(dirname "$(run_sql_file "$q")")")) =="
+    sql=$(sed "s|__TPCH_DATA__|${TPCH_DATA}|g" "$(run_sql_file "$q")")
     sql_hash=$(sha256sum "$SQL_DIR/${q}.sql" | cut -c1-12)
     oracle="$ORACLE_DIR/$data_tag/${q}-${sql_hash}.json"
     [[ -e "$oracle" ]] || echo "   (no cached oracle; DuckDB computes it after the query, which can take minutes)"

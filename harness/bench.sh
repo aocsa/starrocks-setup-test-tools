@@ -8,6 +8,7 @@
 #   harness/bench.sh --sf 1 --gpus "0 1" --iterations 1
 #   harness/bench.sh --sf 1000 --pin --label pinned        # pin lineitem/orders first (PIN=1)
 #   harness/bench.sh --sf 1000 --whole-files               # whole files per CN, unpinned
+#   harness/bench.sh --sf 3000 --hinted                    # tests/tpch-hinted where it exists
 #
 # Writes $RUN_ROOT_BASE/bench/<timestamp>_<label>/:
 #   runtimes.csv   engine,query,iteration,runtime_s,status,sf   (one row per query run)
@@ -34,6 +35,7 @@ fresh_per_query=0
 label=bench
 pin=0
 whole_files=
+sql_dir=
 while [[ $# -gt 0 ]]; do
     case $1 in
     --sf) sfs=$2; shift 2 ;;
@@ -43,6 +45,7 @@ while [[ $# -gt 0 ]]; do
     --fresh-per-query) fresh_per_query=1; shift ;;
     --pin) pin=1; shift ;;
     --whole-files) whole_files=1; shift ;;
+    --hinted) sql_dir=$TOOLS_REPO/tests/tpch-hinted; shift ;;
     --label) label=$2; shift 2 ;;
     -h | --help) usage ;;
     *) echo "unknown argument: $1" >&2; usage 2 ;;
@@ -59,7 +62,7 @@ echo "== bench '$label': sf=[$sfs] queries=[$queries] iterations=$iterations gpu
 run_cluster() {
     local sf=$1 iteration=$2 query_list=$3 name=$4 part=$out/runs/$4.csv status=0
     echo "-- sf$sf iteration $iteration: $query_list"
-    PIN=$pin FE_WHOLE_FILE_RANGES=${whole_files:-$pin} \
+    PIN=$pin FE_WHOLE_FILE_RANGES=${whole_files:-$pin} TPCH_SQL_DIR=$sql_dir \
         SF=$sf GPUS="$gpus" TPCH_QUERIES="$query_list" ITERATION=$iteration RESULTS_CSV=$part \
         RUN_ROOT=$out/runs/$name ORACLE_DIR=$RUN_ROOT_BASE/oracle \
         "$TOOLS_REPO/tests/4cn_tpch_joins_sf1000.sh" >"$out/runs/$name.log" 2>&1 || status=$?

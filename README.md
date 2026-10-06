@@ -94,7 +94,12 @@ check passes trivially.
 ```bash
 harness/bench.sh --sf "1000 3000" --queries "q14 q07 q12 q19" --iterations 3
 harness/bench.sh --sf 3000 --fresh-per-query --label cold      # new cluster for every query
+harness/bench.sh --sf 3000 --queries "q05 q08 q09" --hinted    # join-hinted SQL from tests/tpch-hinted/
 ```
+
+`--hinted` runs the queries in `tests/tpch-hinted/` instead of `tests/tpch/` (any query without
+a hinted file uses the standard text). Results are still checked against DuckDB on the standard
+text. See [`tests/tpch-hinted/README.md`](tests/tpch-hinted/README.md) for the join orders.
 
 Each iteration starts a fresh FE and fresh CNs. Results go to
 `$RUN_ROOT_BASE/bench/<timestamp>_<label>/`: `runtimes.csv`
@@ -109,6 +114,8 @@ runs), and each cluster's logs. Times are the StarRocks query wall time, to the 
 | SF1000, whole files, unpinned | 6/7 | q14 6.3 s, q05 2.1 s, q07 2.4 s, q08 2.8 s, q12 1.4 s, q19 2.0 s; q09 out of GPU memory |
 | SF1000, whole files, `PIN=1 PIN_COMPRESSION=1` | 6/7 | pin 45 s; q14 2.7 s, q05 1.0 s, q07 4.6 s, q08 1.1 s, q12 1.1 s, q19 1.8 s; q09 out of GPU memory |
 | SF3000 | 4/7 | q14 20 s, q07 24 s, q12 8 s, q19 20 s |
+| SF3000, exchange spill (Sirius `36235217`), `HOST_BYTES=256GiB` | q05 q08 pass | q05 39.5 s, q08 34.9 s; q09 out of GPU memory |
+| SF3000, exchange spill + `--hinted`, `HOST_BYTES=256GiB` | 3/3 | q05 56.3 s, q08 33.4 s, q09 28.3 s |
 
 These are single runs. The pinned run used `HOST_BYTES=320GiB` per CN, and each CN pinned all of
 `lineitem` and `orders`.
