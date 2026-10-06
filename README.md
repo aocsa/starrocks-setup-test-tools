@@ -78,6 +78,8 @@ Settings for the 4-CN script, all through the environment:
 | `HOST_BYTES` | 128 GiB | host spill memory per CN |
 | `PIPELINE_THREADS` | `4` | engine pipeline threads per CN |
 | `RUN_ROOT` | `$RUN_ROOT_BASE/tpch-joins-sf$SF` | logs (`run/`) and cached DuckDB answers (`oracle/`) |
+| `PIN`, `PIN_TIER`, `PIN_COMPRESSION` | `0`, `host`, `0` | pin `lineitem` + `orders` on every CN before the queries (`harness/pin.sh`) |
+| `FE_WHOLE_FILE_RANGES` | `$PIN` | whole files per CN (FE patch) instead of byte ranges |
 | `INJECT_FAILURE_QUERY` | unset | first run this query with one fragment failed on purpose, and require the CNs to hold nothing afterwards |
 | `ALLOW_BUSY_GPUS` | `0` | `1` skips the check that the selected GPUs are idle |
 | `FE_*_PORT`, `PORT_BASE`, `PORT_STRIDE` | 9031/8031/9021/9011, 9100, 10 | FE ports and CN port range; non-default so another FE can run alongside |
@@ -101,10 +103,15 @@ runs), and each cluster's logs. Times are the StarRocks query wall time, to the 
 
 ### Reference results (4× GB200, one CN per GPU, 156 GiB pool each)
 
-| SF | passing | times |
+| run | passing | times |
 |---|---|---|
-| 1000 | 7/7 | q14 4 s, q05 3 s, q07 2 s, q08 2 s, q09 6 s, q12 1 s, q19 2 s |
-| 3000 | 4/7 | q14 20 s, q07 24 s, q12 8 s, q19 20 s |
+| SF1000, byte ranges (stock FE) | 7/7 | q14 5.6 s, q05 2.0 s, q07 2.1 s, q08 2.5 s, q09 5.7 s, q12 1.3 s, q19 1.6 s |
+| SF1000, whole files, unpinned | 6/7 | q14 6.3 s, q05 2.1 s, q07 2.4 s, q08 2.8 s, q12 1.4 s, q19 2.0 s; q09 out of GPU memory |
+| SF1000, whole files, `PIN=1 PIN_COMPRESSION=1` | 6/7 | pin 45 s; q14 2.7 s, q05 1.0 s, q07 4.6 s, q08 1.1 s, q12 1.1 s, q19 1.8 s; q09 out of GPU memory |
+| SF3000 | 4/7 | q14 20 s, q07 24 s, q12 8 s, q19 20 s |
+
+These are single runs. The pinned run used `HOST_BYTES=320GiB` per CN, and each CN pinned all of
+`lineitem` and `orders`.
 
 q05, q08 and q09 run out of GPU memory at SF3000. Each one shuffles the unfiltered `lineitem`
 before any selective join: about 126 GB of scan output per CN plus about 94 GB arriving from
@@ -115,20 +122,18 @@ output, and spilling.
 
 `tests/patches/starrocks-fe-files-query-whole-file-ranges.patch` adds the FE setting
 `files_query_whole_file_ranges`. With it on, FILES() scans hand each CN whole parquet files.
-`setup/build-fe.sh` applies it, and the 4-CN script turns it on and stops if the FE doesn't know
-the setting.
+`setup/build-fe.sh` applies it.
 
-Why it's needed:
+**Only pinned runs need it.** Stock StarRocks cuts files at instance byte boundaries, so one
+parquet file can be split across CNs (FILES() marks every file splittable).
 
-- **Stock StarRocks cuts large files.** It cuts files at instance byte boundaries, so one parquet
-  file can be split across CNs. FILES() marks every file splittable, so there's no setting to
-  stop it.
-- **The CN on #2016 refuses split files** ("byte-range splits do not tile the parquet file"),
-  because its Substrait path to DuckDB drops byte ranges.
-- **Pinned tables serve whole files only.** They serve a scan whose file set is a subset of the
-  pin, never a byte range of a file. So pinned runs need whole files regardless.
-
-Byte-range support in the CN, so unpinned runs work on a stock FE, is in progress for #2016.
+- **The current CN (Sirius `a9c4b340` and later)** reads exactly the row groups its byte ranges
+  own, using StarRocks' start-offset rule, so unpinned runs work with stock FE behavior. That's
+  the default: `FE_WHOLE_FILE_RANGES=0`.
+- **Pinned tables** serve a scan whose file set is a subset of the pin, never a byte range of a
+  file. So `PIN=1` turns whole files on, and the script stops if the FE doesn't know the setting.
+- **Older CNs** refuse split files ("byte-range splits do not tile the parquet file") and need
+  `FE_WHOLE_FILE_RANGES=1`.
 
 ## Troubleshooting
 
