@@ -2,8 +2,8 @@
 # Builds the StarRocks FE that Sirius's StarRocks integration pins, with this repo's FE patch.
 #
 # The patch adds `files_query_whole_file_ranges`, so FILES() scans hand each CN whole parquet
-# files; without it the CN refuses byte-range splits of large files ("byte-range splits do not
-# tile the parquet file"). Applying it is idempotent.
+# files. Only pinned runs (PIN=1) need it: the CN reads byte-range splits of a file, so unpinned
+# runs work on a stock FE. Applying it is idempotent.
 #
 # THRIFT points at the `cn` env's Thrift compiler: StarRocks builds against libthrift 0.23, and
 # the `fe` env's 0.20 compiler generates Java that doesn't compile against it ("wrong number of

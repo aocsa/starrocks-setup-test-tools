@@ -37,6 +37,8 @@ echo "== toolchain"
 for tool in gcc g++ make pkg-config git curl numactl python3; do
     command -v "$tool" >/dev/null && ok "$tool" || miss "$tool"
 done
+python3 -m pip --version >/dev/null 2>&1 && ok "python3 pip (installs NIXL's meson/ninja/pybind11)" ||
+    miss "python3 pip: apt install python3-pip"
 [[ -e /usr/include/infiniband/verbs.h ]] && ok "RDMA headers (libibverbs-dev / rdma-core)" ||
     miss "RDMA headers: /usr/include/infiniband/verbs.h (libibverbs-dev or MLNX OFED)"
 if command -v pixi >/dev/null; then
@@ -65,6 +67,15 @@ fi
 mkdir -p "$RUN_ROOT_BASE" 2>/dev/null && [[ -w "$RUN_ROOT_BASE" ]] && ok "run root $RUN_ROOT_BASE is writable" ||
     miss "writable RUN_ROOT_BASE ($RUN_ROOT_BASE)"
 
+echo "== host memory"
+mem_gib=$(awk '/MemTotal/ { printf "%d", $2 / 1048576 }' /proc/meminfo)
+if [[ "$mem_gib" -ge 1100 ]]; then
+    ok "${mem_gib} GiB RAM"
+else
+    warn "${mem_gib} GiB RAM: SF3000 runs spill up to HOST_BYTES=256GiB per CN (about 1 TiB for 4 CNs)"
+fi
+
+# Missing data is only a warning: setup/gen-data.sh needs the builds that follow this check.
 echo "== datasets"
 for sf in ${SCALE_FACTORS:-1000}; do
     dir=$DATA_ROOT/tpch_sf$sf
@@ -72,7 +83,11 @@ for sf in ${SCALE_FACTORS:-1000}; do
     for table in customer lineitem nation orders part partsupp region supplier; do
         compgen -G "$dir/$table/*.parquet" >/dev/null || absent+=("$table")
     done
-    if [[ ${#absent[@]} -eq 0 ]]; then ok "TPC-H SF$sf at $dir"; else miss "TPC-H SF$sf at $dir (no parquet for: ${absent[*]})"; fi
+    if [[ ${#absent[@]} -eq 0 ]]; then
+        ok "TPC-H SF$sf at $dir"
+    else
+        warn "TPC-H SF$sf at $dir has no parquet for: ${absent[*]} (after setup: setup/gen-data.sh $sf)"
+    fi
 done
 
 echo

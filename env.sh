@@ -10,10 +10,11 @@
 TOOLS_REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WORK=${WORK:-$(cd "$TOOLS_REPO/.." && pwd)}
 
-# Sirius checkout and branch the scripts drive.
+# Sirius checkout and branch the scripts drive: the top of the StarRocks PR stack
+# (sirius-db/sirius#2037 ... #2062). Use main once the stack has merged.
 SIRIUS_DIR=${SIRIUS_DIR:-$WORK/sirius}
-SIRIUS_BRANCH=${SIRIUS_BRANCH:-feat/tpch-groupby-join-nixl}
-SIRIUS_REMOTE=${SIRIUS_REMOTE:-git@github.com:aocsa/sirius.git}
+SIRIUS_BRANCH=${SIRIUS_BRANCH:-stacked/sr-runtime-filters}
+SIRIUS_REMOTE=${SIRIUS_REMOTE:-https://github.com/sirius-db/sirius.git}
 
 # Derived paths the tests use. SR_DIR is Sirius's StarRocks integration; REPO_ROOT is the Sirius
 # repo root (engine build, repo-root pixi env).

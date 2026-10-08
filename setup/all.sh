@@ -46,4 +46,4 @@ done
 
 echo "== building the CN"
 step cn "$HERE/build-cn.sh"
-echo "setup complete; next: tests/4cn_tpch_joins.sh or harness/bench.sh (see README.md)"
+echo "setup complete; next: setup/gen-data.sh if the data isn't there, then tests/4cn_tpch_joins_sf1000.sh (README.md)"
