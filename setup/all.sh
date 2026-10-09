@@ -3,7 +3,7 @@
 # UCX/NIXL, the engine and the FE in parallel (they're independent), then the CN.
 # Each build logs to $RUN_ROOT_BASE/setup-logs/<step>.log; a failed step prints its log tail.
 #
-# Reference build times on 4x GB200: engine ~15 min, FE ~10 min, UCX+NIXL ~10 min, CN ~2 min.
+# Cold build times per machine are in the box branches' BOX.md (engine, FE and UCX+NIXL dominate).
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

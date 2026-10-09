@@ -30,7 +30,7 @@ usage() {
 sfs=1000
 queries="q14 q05 q07 q08 q09 q12 q19"
 iterations=1
-gpus="0 1 2 3"
+gpus=$GPUS # env.sh: every GPU unless set
 fresh_per_query=0
 label=bench
 pin=0

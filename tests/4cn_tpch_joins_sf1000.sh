@@ -53,7 +53,7 @@ export JAVA_HOME=${JAVA_HOME:-$SR_DIR/.pixi/envs/fe/lib/jvm}
 
 TPCH_DATA=${TPCH_DATA:-$DATA_ROOT/tpch_sf$SF}
 QUERIES=${TPCH_QUERIES:-q14 q05 q07 q08 q09 q12 q19}
-GPUS=(${GPUS:-0 1 2 3})
+GPUS=($GPUS) # env.sh: every GPU unless set
 NUM_CNS=${#GPUS[@]}
 
 # Off the StarRocks defaults (9030/8030/9020/9010): another FE may already hold them.
@@ -64,11 +64,8 @@ FE_EDIT_LOG_PORT=${FE_EDIT_LOG_PORT:-9011}
 PORT_BASE=${PORT_BASE:-9100}
 PORT_STRIDE=${PORT_STRIDE:-10}
 
-# Per CN. The NIXL slab reserves GPU_FRACTION of the GPU up front; HOST_BYTES is the
-# host spill tier (four CNs share the box's host memory with the DuckDB oracle).
-GPU_FRACTION=${GPU_FRACTION:-0.85}
-HOST_BYTES=${HOST_BYTES:-137438953472} # 128 GiB
-PIPELINE_THREADS=${PIPELINE_THREADS:-4}
+# Per CN (defaults in env.sh). The NIXL slab reserves GPU_FRACTION of the GPU up front;
+# HOST_BYTES is the host spill tier, sized so the CNs and the DuckDB check share host RAM.
 # Bind each CN's threads to the CPU socket of its GPU.
 NUMA_BIND=${NUMA_BIND:-1}
 QUERY_TIMEOUT_S=${QUERY_TIMEOUT_S:-3600}
@@ -84,8 +81,7 @@ PIN_PLAN_DIR=${PIN_PLAN_DIR:-$REPO_ROOT/src/compression/simpatico_codegen/plans/
 FE_WHOLE_FILE_RANGES=${FE_WHOLE_FILE_RANGES:-$PIN}
 RESULTS_CSV=${RESULTS_CSV:-}
 ITERATION=${ITERATION:-0}
-# DuckDB defaults to 80% of RAM, which would collide with the CNs' host tiers.
-export DUCKDB_MEMORY_LIMIT=${DUCKDB_MEMORY_LIMIT:-512GB}
+# DUCKDB_MEMORY_LIMIT (env.sh) keeps DuckDB from taking 80% of RAM next to the CNs' host tiers.
 
 export UCX_TLS=${UCX_TLS:-cuda_copy,cuda_ipc,tcp,self}
 
@@ -464,7 +460,10 @@ done
 
 echo "== checking packed NIXL hops over transmit_chunk =="
 hops=PASS
-"$PYTHON" - "$E2E" "$NUM_CNS" <<'PY' || hops=FAIL
+if [[ "$NUM_CNS" -lt 2 ]]; then
+    echo "one CN: no peer to ship to, skipping"
+    hops=SKIP
+elif ! "$PYTHON" - "$E2E" "$NUM_CNS" <<'PY'; then hops=FAIL; fi
 import re, sys
 from pathlib import Path
 e2e, n = Path(sys.argv[1]), int(sys.argv[2])
@@ -484,11 +483,15 @@ if not any("transmit_chunk" in text for text in logs.values()):
     raise SystemExit("no transmit_chunk in CN logs")
 print("packed hops", {"shipped_bytes": shipped, "received_batches": received})
 PY
-[[ "$hops" == PASS ]] || failed=$((failed + 1))
+[[ "$hops" == FAIL ]] && failed=$((failed + 1))
 
 echo "== summary (data=${TPCH_DATA}, cns=${NUM_CNS}, logs=${E2E}) =="
 printf '%s\n' "${results[@]}" "${hops} nixl-hops"
 [[ "$failed" -eq 0 ]] || exit 1
 
 dump_logs_on_fail=0
-echo "OK: TPC-H join queries matched DuckDB across ${NUM_CNS} CNs with a packed NIXL shuffle"
+if [[ "$hops" == PASS ]]; then
+    echo "OK: TPC-H join queries matched DuckDB across ${NUM_CNS} CNs with a packed NIXL shuffle"
+else
+    echo "OK: TPC-H join queries matched DuckDB on ${NUM_CNS} CN"
+fi

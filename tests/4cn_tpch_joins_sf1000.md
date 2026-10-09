@@ -35,7 +35,7 @@ The [README](../README.md) covers how to set up and run, and the `setup/` script
 
 - **The generator:** Sirius's `test/tpch_performance/generate_tpch_data.sh` with tpchgen-rs, which it clones and builds on first use. It writes `<table>/*.parquet`, the layout the tests expect.
 - **Partial output:** the generator skips a directory that already exists, so `gen-data.sh` refuses a partial one instead of leaving it incomplete.
-- **File layout differs from the reference results.** The reference results used the datasets at `/scratch/sirius/datasets` (for example 180 `lineitem` files at SF3000). Freshly generated data has different file and row-group sizes. The answers are the same, but timings can differ.
+- **File layout differs from the reference results.** A box's reference results (`BOX.md` on its `box/*` branch) used that box's datasets (on `box/gb200`, 180 `lineitem` files at SF3000). Freshly generated data has different file and row-group sizes. The answers are the same, but timings can differ.
 
 ## The 4-CN run (`tests/4cn_tpch_joins_sf1000.sh`)
 
