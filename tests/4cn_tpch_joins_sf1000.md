@@ -42,4 +42,4 @@ The [README](../README.md) covers how to set up and run, and the `setup/` script
 - **It refuses to start while a selected GPU has compute processes,** because each CN reserves `GPU_FRACTION` (85%) of its GPU up front. `ALLOW_BUSY_GPUS=1` overrides this.
 - **Ports:** the FE uses 9031/8031/9021/9011 and CN *i* uses `PORT_BASE + i*PORT_STRIDE` to `+4`. These are off the StarRocks defaults, so another FE can run alongside.
 - **The DuckDB answers** are cached by SQL hash and data path in `$RUN_ROOT_BASE/oracle` (`ORACLE_DIR`).
-- **Leak check:** after every query each CN must log `leak counters` at zero (`harness/cn_leak_check.sh`). A failed query must not leave GPU memory behind.
+- **Leak check:** after every query each CN must log `leak counters` at zero (`scripts/cn_leak_check.sh`). A failed query must not leave GPU memory behind.

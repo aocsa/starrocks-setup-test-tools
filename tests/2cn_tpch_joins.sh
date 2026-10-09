@@ -32,8 +32,8 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=../env.sh
 source "$HERE/../env.sh"
 require_sirius
-# shellcheck source=../harness/cn_leak_check.sh
-source "$TOOLS_REPO/harness/cn_leak_check.sh"
+# shellcheck source=../scripts/cn_leak_check.sh
+source "$TOOLS_REPO/scripts/cn_leak_check.sh"
 
 # nixl / UCX paths, UCX_TLS, and LD_LIBRARY_PATH (engine .so, nixl, UCX, pixi).
 # shellcheck source=/dev/null

@@ -3,12 +3,12 @@
 # Every iteration starts a fresh FE and fresh CNs (tests/4cn_tpch_joins_sf1000.sh), so GPU state
 # never carries over; --fresh-per-query also restarts the cluster for every query.
 #
-#   harness/bench.sh --sf 1000 --iterations 3
-#   harness/bench.sh --sf "1000 3000" --queries "q14 q07 q12 q19" --fresh-per-query --label cold
-#   harness/bench.sh --sf 1 --gpus "0 1" --iterations 1
-#   harness/bench.sh --sf 1000 --pin --label pinned        # pin lineitem/orders first (PIN=1)
-#   harness/bench.sh --sf 1000 --whole-files               # whole files per CN, unpinned
-#   harness/bench.sh --sf 3000 --hinted                    # tests/tpch-hinted where it exists
+#   scripts/bench.sh --sf 1000 --iterations 3
+#   scripts/bench.sh --sf "1000 3000" --queries "q14 q07 q12 q19" --fresh-per-query --label cold
+#   scripts/bench.sh --sf 1 --gpus "0 1" --iterations 1
+#   scripts/bench.sh --sf 1000 --pin --label pinned        # pin lineitem/orders first (PIN=1)
+#   scripts/bench.sh --sf 1000 --whole-files               # whole files per CN, unpinned
+#   scripts/bench.sh --sf 3000 --hinted                    # tests/tpch-hinted where it exists
 #
 # Writes $RUN_ROOT_BASE/bench/<timestamp>_<label>/:
 #   runtimes.csv   engine,query,iteration,runtime_s,status,sf   (one row per query run)

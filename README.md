@@ -47,7 +47,7 @@ tests/4cn_tpch_joins_sf1000.sh                                  # SF1000
 SF=3000 HOST_BYTES=$((256 << 30)) tests/4cn_tpch_joins_sf1000.sh # SF3000: more host spill, if RAM allows
 
 # 5. Timings across iterations: runtimes.csv + summary.md per run
-harness/bench.sh --sf 1000 --iterations 3
+scripts/bench.sh --sf 1000 --iterations 3
 ```
 
 **How long it takes:**
@@ -67,7 +67,7 @@ tests/      4cn_tpch_joins_sf1000.sh   one CN per GPU at any SF; despite the nam
             2cn_tpch_joins.sh, 2cn_files_group_by.sh   older 2-CN checks
             tpch/q01..q22.sql          TPC-H over FILES(); tpch-hinted/ join-ordered q05/q08/q09
             tpch_files_compare.py      the DuckDB check; patches/ the optional FE patch
-harness/    bench.sh (SF x queries x iterations), cn_leak_check.sh, pin.sh
+scripts/    bench.sh (SF x queries x iterations), cn_leak_check.sh, pin.sh
 ```
 
 Default directory layout (override any path in the environment):
@@ -94,7 +94,7 @@ A failed query doesn't stop the run. A dead CN does: the remaining queries show 
 
 **Output:**
 - `$RUN_ROOT/run/`: per-query results and errors, FE logs, and `cn<i>.log`.
-- `harness/bench.sh` writes `$RUN_ROOT_BASE/bench/<timestamp>_<label>/`, with `runtimes.csv` (`engine,query,iteration,runtime_s,status,sf`) and `summary.md`.
+- `scripts/bench.sh` writes `$RUN_ROOT_BASE/bench/<timestamp>_<label>/`, with `runtimes.csv` (`engine,query,iteration,runtime_s,status,sf`) and `summary.md`.
 - Every bench iteration starts a fresh cluster. `--fresh-per-query` also restarts it for every query.
 
 ## Settings
@@ -123,7 +123,7 @@ Sirius CN settings that matter for benchmarks:
 - `SIRIUS_CN_RUNTIME_FILTERS=0` turns off runtime filters (on by default).
 - `SIRIUS_CN_STREAM_OUTPUT=0` ships a fragment's output after it finishes instead of while it runs.
 
-`harness/bench.sh --hinted` runs the join-ordered q05/q08/q09 from `tests/tpch-hinted/` instead (see its README).
+`scripts/bench.sh --hinted` runs the join-ordered q05/q08/q09 from `tests/tpch-hinted/` instead (see its README).
 
 ## Reference results
 

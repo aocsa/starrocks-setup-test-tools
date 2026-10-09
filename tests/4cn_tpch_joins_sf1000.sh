@@ -23,17 +23,17 @@
 # through env.sh (SIRIUS_DIR, default ../sirius next to this repo).
 #
 # Results: each query appends `engine,query,iteration,runtime_s,status` to RESULTS_CSV when set
-# (harness/bench.sh sets it, with ITERATION). Wall times are the StarRocks query only.
+# (scripts/bench.sh sets it, with ITERATION). Wall times are the StarRocks query only.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=../env.sh
 source "$HERE/../env.sh"
 require_sirius
-# shellcheck source=../harness/cn_leak_check.sh
-source "$TOOLS_REPO/harness/cn_leak_check.sh"
-# shellcheck source=../harness/pin.sh
-source "$TOOLS_REPO/harness/pin.sh"
+# shellcheck source=../scripts/cn_leak_check.sh
+source "$TOOLS_REPO/scripts/cn_leak_check.sh"
+# shellcheck source=../scripts/pin.sh
+source "$TOOLS_REPO/scripts/pin.sh"
 
 # nixl / UCX paths, UCX_TLS, and LD_LIBRARY_PATH (engine .so, nixl, UCX, pixi).
 # shellcheck source=/dev/null
@@ -72,7 +72,7 @@ QUERY_TIMEOUT_S=${QUERY_TIMEOUT_S:-3600}
 # Set to a query name (e.g. q05) to first run that query with one fragment failed on purpose, and
 # require that the CNs hold nothing afterwards. The query then runs again in the normal loop.
 INJECT_FAILURE_QUERY=${INJECT_FAILURE_QUERY:-}
-# PIN=1 pins lineitem and orders on every CN before the queries (harness/pin.sh; PIN_TIER,
+# PIN=1 pins lineitem and orders on every CN before the queries (scripts/pin.sh; PIN_TIER,
 # PIN_*_COLS). PIN_COMPRESSION=1 compresses pins with the Simpatico plans in PIN_PLAN_DIR.
 PIN=${PIN:-0}
 PIN_COMPRESSION=${PIN_COMPRESSION:-0}

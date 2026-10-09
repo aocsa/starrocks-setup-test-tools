@@ -1,4 +1,4 @@
-# Shared settings for the setup scripts, the tests and the harness. Source it; don't run it.
+# Shared settings for the setup scripts, the tests and scripts/. Source it; don't run it.
 #
 # Precedence, highest first: the environment, then the box profile (box.sh, committed on the
 # box/* branches for a specific machine), then the machine-independent defaults below, which
