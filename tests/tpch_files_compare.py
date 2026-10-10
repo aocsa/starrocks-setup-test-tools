@@ -42,10 +42,16 @@ def to_duckdb(sql: str, data_root: Path, con: duckdb.DuckDBPyConnection) -> str:
     return FILES_RE.sub(repl, sql)
 
 
-def parse_tsv(text: str) -> tuple[list[str], list[list[str]]]:
+def parse_tsv(text: str) -> tuple[list[str] | None, list[list[str]]]:
+    """The header and rows of mysql's batch output.
+
+    A query that returns no rows prints nothing, not even its header: that is
+    (None, []), and only DuckDB's answer can say whether it is right. The callers
+    only compare after mysql succeeded, so an empty file is never an error.
+    """
     lines = [line for line in text.splitlines() if line.strip() and not line.startswith("SET ")]
     if not lines:
-        raise SystemExit(f"empty mysql result:\n{text}")
+        return None, []
     header = lines[0].split("\t")
     rows = [line.split("\t") for line in lines[1:] if not line.lower().startswith(header[0].lower())]
     return header, rows
@@ -104,6 +110,13 @@ def main() -> None:
         names, want_rows = cached_answer(sql, Path(data_root), Path(cache[0]))
     else:
         names, want_rows = duckdb_answer(sql, Path(data_root))
+    if header is None:
+        # No rows and no header from mysql: right only if DuckDB has no rows either.
+        # q11 at SF1000 is such a query: its file keeps the SF1 fraction.
+        if want_rows:
+            raise SystemExit(f"row count fe=0 duckdb={len(want_rows)}")
+        print(f"matches DuckDB: 0 rows {names}")
+        return
     if [name.lower() for name in header] != [name.lower() for name in names]:
         raise SystemExit(f"column mismatch fe={header} duckdb={names}")
     def key(row):
