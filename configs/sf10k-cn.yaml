@@ -1,0 +1,44 @@
+# Plan section 4, one file per CN (envsubst: ${CN_INDEX}). GPU budget: 85% of 189,471 MiB HBM
+# (161,050 MiB) minus the ring exchange's rings (1 GiB send + 1.5 GiB receive).
+sirius:
+  topology:
+    num_gpus: 1
+  memory:
+    gpu:
+      allocator: async_capped
+      usage_limit_bytes: 158490MiB
+      reservation_limit_fraction: 0.9
+      downgrade_trigger_fraction: 0.9
+      downgrade_stop_fraction: 0.85
+    host:
+      capacity_bytes: 160GiB
+      block_size: 1MiB
+      pool_size: 128
+      initial_number_pools: 384
+    disk:
+      disk_id: 0
+      capacity_bytes: 1600GB
+      downgrade_root_dirs: /scratch/prestouser/aocsa/spill/cn${CN_INDEX}
+  executor:
+    scan_manager:
+      backend: sirius
+      memory_prefetcher:
+        enable: true
+        num_threads: 4
+      num_threads: 16
+      max_readahead_scans: 48
+      max_readahead_bytes: 4GB
+    pipeline:
+      num_threads: 16
+    downgrade:
+      num_threads: 2
+    task_creator:
+      num_threads: 2
+  operator_params:
+    scan_task_batch_size: 1GB
+    hash_partition_bytes: 4GB
+    concat_batch_bytes: 2GB
+    max_build_hash_table_bytes: 4GB
+    max_dynamic_filter_bloom_bytes_per_gpu: 4096MiB
+  compression:
+    enable_spill_compression: true
