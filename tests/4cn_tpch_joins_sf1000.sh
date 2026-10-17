@@ -69,6 +69,9 @@ PORT_STRIDE=${PORT_STRIDE:-10}
 # Bind each CN's threads to the CPU socket of its GPU.
 NUMA_BIND=${NUMA_BIND:-1}
 QUERY_TIMEOUT_S=${QUERY_TIMEOUT_S:-3600}
+# The FE waits this long for a CN to accept a fragment. A CN runs a sender fragment inside
+# that call, so StarRocks' 300 s default fails a query whose scan runs longer (SF10000).
+QUERY_DELIVERY_TIMEOUT_S=${QUERY_DELIVERY_TIMEOUT_S:-$QUERY_TIMEOUT_S}
 # Set to a query name (e.g. q05) to first run that query with one fragment failed on purpose, and
 # require that the CNs hold nothing afterwards. The query then runs again in the normal loop.
 INJECT_FAILURE_QUERY=${INJECT_FAILURE_QUERY:-}
@@ -404,7 +407,7 @@ run_sql_file() {
         echo "$SQL_DIR/$1.sql"
     fi
 }
-SESSION="SET query_timeout = ${QUERY_TIMEOUT_S}; SET pipeline_dop = 1; SET parallel_fragment_exec_instance_num = 1;"
+SESSION="SET query_timeout = ${QUERY_TIMEOUT_S}; SET query_delivery_timeout = ${QUERY_DELIVERY_TIMEOUT_S}; SET pipeline_dop = 1; SET parallel_fragment_exec_instance_num = 1;"
 data_tag=$(printf '%s' "$TPCH_DATA" | tr -c 'A-Za-z0-9._-' '_')
 
 results=()
