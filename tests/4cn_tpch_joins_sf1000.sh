@@ -185,6 +185,10 @@ cleanup() {
     for pid in "${cn_pids[@]}"; do
         kill -KILL -"$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
     done
+    if [[ -n "${SPILL_ROOT:-}" ]]; then
+        du -sh "$SPILL_ROOT"/cn* 2>/dev/null || true
+        for i in $(seq 0 $((NUM_CNS - 1))); do rm -rf "$SPILL_ROOT/cn$i"; done
+    fi
     exit "$status"
 }
 trap cleanup EXIT INT TERM
@@ -226,6 +230,27 @@ if [[ "$PIN_COMPRESSION" == 1 ]]; then
     enable_pin_table_compression: true
     input_plan_dir: "${PIN_PLAN_DIR}"
 YAML
+fi
+
+# SIRIUS_YAML: a sirius.yaml template that replaces the generated config, expanded per CN with
+# envsubst (${CN_INDEX} = the CN's index), so each CN can have its own disk-tier directory.
+# SPILL_ROOT: when set, each CN's ${SPILL_ROOT}/cn<i> is created, checked writable before the
+# run and deleted after it.
+if [[ -n "${SIRIUS_YAML:-}" ]]; then
+    CN_INDEX=0 envsubst <"$SIRIUS_YAML" >"$E2E/sirius.yaml"
+fi
+echo "== effective sirius.yaml (CN0) =="
+cat "$E2E/sirius.yaml"
+if [[ -n "${SPILL_ROOT:-}" ]]; then
+    for i in $(seq 0 $((NUM_CNS - 1))); do
+        rm -rf "$SPILL_ROOT/cn$i"
+        mkdir -p "$SPILL_ROOT/cn$i"
+        if ! touch "$SPILL_ROOT/cn$i/.writable" 2>/dev/null; then
+            echo "spill directory $SPILL_ROOT/cn$i is not writable" >&2
+            exit 2
+        fi
+        rm -f "$SPILL_ROOT/cn$i/.writable"
+    done
 fi
 
 echo "== packaging isolated FE =="
@@ -288,6 +313,15 @@ start_cn() {
             bind=(numactl --cpunodebind="$node")
         fi
     fi
+    local cn_yaml="$E2E/sirius.yaml"
+    if [[ -n "${SIRIUS_YAML:-}" ]]; then
+        cn_yaml="$E2E/sirius-cn$i.yaml"
+        CN_INDEX=$i envsubst <"$SIRIUS_YAML" >"$cn_yaml"
+    fi
+    # The exchange transport and its ring sizes (SIRIUS_CN_EXCHANGE, SIRIUS_CN_RING_*), and the
+    # other SIRIUS_CN_* knobs, pass through to every CN.
+    local cn_knobs=()
+    while IFS= read -r knob; do cn_knobs+=("$knob"); done < <(env | grep -E '^SIRIUS_CN_(EXCHANGE|RING_|NIXL_|TIMING|RUNTIME_FILTERS)' || true)
     # Engine logs: one directory per CN when ENGINE_LOGS=1 (the engine names its file sirius.log).
     local engine_log=()
     if [[ "${ENGINE_LOGS:-0}" == 1 ]]; then
@@ -297,6 +331,7 @@ start_cn() {
     # NO_COLOR keeps tracing fields as plain key=value for the log checks below.
     setsid env \
         "${engine_log[@]}" \
+        "${cn_knobs[@]}" \
         CUDA_VISIBLE_DEVICES="$gpu" \
         NO_COLOR=1 \
         UCX_TLS="$UCX_TLS" \
@@ -319,7 +354,7 @@ start_cn() {
         --brpc-port $((base + 2)) \
         --http-port $((base + 3)) \
         --starlet-port $((base + 4)) \
-        --sirius-config "$E2E/sirius.yaml" \
+        --sirius-config "$cn_yaml" \
         </dev/null >"$E2E/cn$i.log" 2>&1 &
     cn_pids+=($!)
     echo "CN$i gpu=$gpu numa=$node heartbeat=$base brpc=$((base + 2)) http=$((base + 3)) pid=$!"
@@ -467,7 +502,7 @@ elif ! "$PYTHON" - "$E2E" "$NUM_CNS" <<'PY'; then hops=FAIL; fi
 import re, sys
 from pathlib import Path
 e2e, n = Path(sys.argv[1]), int(sys.argv[2])
-hop_re = re.compile(r"shipping packed exchange hop.*\bbytes=(\d+)\b")
+hop_re = re.compile(r"(?:shipping packed exchange hop|shipped ring exchange lane).*\bbytes=(\d+)\b")
 recv_re = re.compile(r"received remote packed batches.*\bbatches=(\d+)")
 names = [f"cn{i}" for i in range(n)]
 logs = {name: (e2e / f"{name}.log").read_text(errors="replace") for name in names}

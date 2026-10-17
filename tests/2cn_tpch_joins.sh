@@ -167,6 +167,10 @@ sirius:
     pipeline:
       num_threads: 4
 YAML
+# SIRIUS_YAML: a sirius.yaml to use instead (the ring exchange runs on an async pool).
+if [[ -n "${SIRIUS_YAML:-}" ]]; then
+    CN_INDEX=0 envsubst <"$SIRIUS_YAML" >"$E2E/sirius.yaml"
+fi
 
 echo "== packaging isolated FE =="
 cp -a "$STARROCKS_FE/bin" "$E2E/fe/bin"
@@ -323,7 +327,7 @@ hops=PASS
 import re, sys
 from pathlib import Path
 e2e = Path(sys.argv[1])
-hop_re = re.compile(r"shipping packed exchange hop.*\bbytes=(\d+)\b")
+hop_re = re.compile(r"(?:shipping packed exchange hop|shipped ring exchange lane).*\bbytes=(\d+)\b")
 recv_re = re.compile(r"received remote packed batches.*\bbatches=(\d+)")
 logs = {name: (e2e / f"{name}.log").read_text(errors="replace") for name in ("cn0", "cn1")}
 shipped = {name: [int(m.group(1)) for m in hop_re.finditer(text) if int(m.group(1)) > 0] for name, text in logs.items()}
