@@ -22,6 +22,11 @@
 # `client` pixi env (mysql), and the repo-root pixi env (python + duckdb). Sirius is found
 # through env.sh (SIRIUS_DIR, default ../sirius next to this repo).
 #
+# GPU pool and spill tiers: GPU_ALLOCATOR picks the pool's allocator (default slab, which the
+# NIXL direct exchange needs; the ring exchange runs on async_capped). DISK_DIR, when set, adds a
+# disk spill tier under that directory, DISK_BYTES big (default 256 GiB): on GPUs smaller than the
+# data a CN receives, the ring lands batches there once its GPU and host shares are full.
+#
 # Results: each query appends `engine,query,iteration,runtime_s,status` to RESULTS_CSV when set
 # (scripts/bench.sh sets it, with ITERATION). Wall times are the StarRocks query only.
 set -euo pipefail
@@ -213,13 +218,24 @@ sirius:
   memory:
     gpu:
       usage_limit_fraction: ${GPU_FRACTION}
-      allocator: slab
+      allocator: ${GPU_ALLOCATOR:-slab}
     host:
       capacity_bytes: ${HOST_BYTES}
   executor:
     pipeline:
       num_threads: ${PIPELINE_THREADS}
 YAML
+if [[ -n "${DISK_DIR:-}" ]]; then
+    mkdir -p "$DISK_DIR"
+    python3 - "$E2E/sirius.yaml" "$DISK_DIR" "${DISK_BYTES:-$((256 << 30))}" <<'PY'
+import sys
+path, root, cap = sys.argv[1:]
+text = open(path).read().replace(
+    "  executor:\n",
+    f"    disk:\n      capacity_bytes: {cap}\n      downgrade_root_dirs: \"{root}\"\n  executor:\n", 1)
+open(path, "w").write(text)
+PY
+fi
 if [[ "$PIN_COMPRESSION" == 1 ]]; then
     cat >>"$E2E/sirius.yaml" <<YAML
   compression:
