@@ -8,8 +8,11 @@ sirius:
       allocator: async_capped
       usage_limit_bytes: 158490MiB
       reservation_limit_fraction: 0.9
-      downgrade_trigger_fraction: 0.9
-      downgrade_stop_fraction: 0.85
+      # cuCascade measures these against the reservation limit, so the real points are the value
+      # + 0.1: spill at 80% of GPU use, stop at 70%. 0.9/0.85 never fired the GPU monitor and
+      # left all spilling to OOM retries (2026-10-21 SF10000: q21 -46%, q09 -15%, q17 -11%).
+      downgrade_trigger_fraction: 0.7
+      downgrade_stop_fraction: 0.6
     host:
       capacity_bytes: 160GiB
       block_size: 1MiB
