@@ -10,7 +10,7 @@
 # One CN per GPU, 85% of each GPU's 189 GB for its pool (about 156 GiB).
 : "${GPUS:=0 1 2 3}"
 : "${GPU_FRACTION:=0.85}"
-# 128 GiB of host spill per CN. SF3000 wants $((256 << 30)); 4 CNs then hold about 1 TiB.
-: "${HOST_BYTES:=$((128 << 30))}"
+# The ring exchange's disk tier (the test sizes it from the free space); DISK_DIR= turns it off.
+: "${DISK_DIR=/scratch/prestouser/$USER/spill}"
 : "${DUCKDB_MEMORY_LIMIT:=512GB}"
 : "${PIPELINE_THREADS:=4}"

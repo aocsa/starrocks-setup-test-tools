@@ -55,21 +55,31 @@ fi
 GPUS=$(echo $GPUS)
 
 # Memory per CN. The CNs and the DuckDB check share host RAM, so each CN's host spill tier gets
-# 40% of RAM split across the CNs, capped at 128 GiB; DuckDB gets another 40%, capped at 512 GB.
+# 40% of RAM split across the CNs; DuckDB gets another 40%, capped at 512 GB.
 _ram_gib=$(awk '/^MemTotal:/ {print int($2 / 1048576)}' /proc/meminfo 2>/dev/null)
 _ram_gib=${_ram_gib:-64}
 _num_gpus=$(wc -w <<<"$GPUS")
 _host_gib=$((_ram_gib * 40 / 100 / _num_gpus))
-((_host_gib > 128)) && _host_gib=128
 ((_host_gib < 1)) && _host_gib=1
 HOST_BYTES=${HOST_BYTES:-$((_host_gib << 30))}
 _duckdb_gb=$((_ram_gib * 40 / 100))
 ((_duckdb_gb > 512)) && _duckdb_gb=512
 export DUCKDB_MEMORY_LIMIT=${DUCKDB_MEMORY_LIMIT:-${_duckdb_gb}GB}
-# Share of each GPU the CN's memory pool reserves up front, and engine threads per CN.
-GPU_FRACTION=${GPU_FRACTION:-0.85}
-PIPELINE_THREADS=${PIPELINE_THREADS:-4}
-unset _ram_gib _num_gpus _host_gib _duckdb_gb
+# Share of each GPU the CN's memory pool reserves up front: 85%, but never leaving less than
+# 5.25 GiB outside the pool, for the CUDA context, NIXL and the ring exchange's rings (up to
+# 1.25 GiB on a small GPU). Sized from the smallest listed GPU.
+_gpu_mib=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits \
+    -i "$(tr ' ' ',' <<<"$GPUS")" 2>/dev/null | sort -n | head -1)
+_gpu_mib=${_gpu_mib:-32768}
+GPU_FRACTION=${GPU_FRACTION:-$(awk -v m="$_gpu_mib" \
+    'BEGIN { f = 1 - 5376 / m; if (f > 0.85) f = 0.85; if (f < 0.5) f = 0.5; printf "%.2f", f }')}
+# Engine threads per CN: 4 when the pool has at least 48 GiB, else 2, so concurrent tasks'
+# reservations don't push a small pool into out-of-memory retries.
+PIPELINE_THREADS=${PIPELINE_THREADS:-$(awk -v m="$_gpu_mib" -v f="$GPU_FRACTION" \
+    'BEGIN { print (m * f >= 48 * 1024) ? 4 : 2 }')}
+# The ring exchange runs on the capped async pool.
+export GPU_ALLOCATOR=${GPU_ALLOCATOR:-async_capped}
+unset _ram_gib _num_gpus _host_gib _duckdb_gb _gpu_mib
 
 # pixi, installed per user by https://pixi.sh.
 export PATH="$HOME/.pixi/bin:$PATH"

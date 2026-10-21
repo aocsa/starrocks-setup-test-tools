@@ -218,7 +218,7 @@ sirius:
   memory:
     gpu:
       usage_limit_fraction: ${GPU_FRACTION}
-      allocator: ${GPU_ALLOCATOR:-slab}
+      allocator: ${GPU_ALLOCATOR:-async_capped}
     host:
       capacity_bytes: ${HOST_BYTES}
   executor:
@@ -227,7 +227,13 @@ sirius:
 YAML
 if [[ -n "${DISK_DIR:-}" ]]; then
     mkdir -p "$DISK_DIR"
-    python3 - "$E2E/sirius.yaml" "$DISK_DIR" "${DISK_BYTES:-$((256 << 30))}" <<'PY'
+    # By default each CN may use half the free space split across the CNs, up to 256 GiB.
+    if [[ -z "${DISK_BYTES:-}" ]]; then
+        _free=$(df --output=avail -B1 "$DISK_DIR" | tail -1)
+        DISK_BYTES=$((_free / 2 / NUM_CNS))
+        ((DISK_BYTES > (256 << 30))) && DISK_BYTES=$((256 << 30))
+    fi
+    python3 - "$E2E/sirius.yaml" "$DISK_DIR" "$DISK_BYTES" <<'PY'
 import sys
 path, root, cap = sys.argv[1:]
 text = open(path).read().replace(
